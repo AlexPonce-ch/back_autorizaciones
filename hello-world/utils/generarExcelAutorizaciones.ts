@@ -2,11 +2,8 @@ import ExcelJS from 'exceljs';
 import * as fs from 'fs';
 import * as path from 'path';
 
-
-
 export async function generarExcelAutorizaciones(
   registros: any[],
-  tamanioPagina: number,
   nombreArchivo: string
 ): Promise<string> {
   const encabezado = [
@@ -22,36 +19,69 @@ export async function generarExcelAutorizaciones(
   ];
 
   const outputDir = path.join('/var/output');
-
-  if (!fs.existsSync(outputDir )) {
-    fs.mkdirSync(outputDir , { recursive: true });
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const outputPath = path.join(outputDir , nombreArchivo);
+  const outputPath = path.join(outputDir, nombreArchivo);
   const workbook = new ExcelJS.Workbook();
-  const totalPaginas = Math.ceil(registros.length / tamanioPagina);
 
-  for (let i = 0; i < totalPaginas; i++) {
-    const hoja = workbook.addWorksheet(`Página ${i + 1}`);
-    hoja.addRow(encabezado);
+  const hoja = workbook.addWorksheet('Autorizaciones');
+  hoja.addRow(encabezado);
 
-    const pagina = registros.slice(i * tamanioPagina, (i + 1) * tamanioPagina);
-    pagina.forEach((reg: any) => {
-      hoja.addRow([
-        reg.fechaProceso, reg.fechaHoraTransaccion, reg.cuenta, reg.numeroTarjetaEnmascarada, reg.fechaExpiracion,
-        reg.tipoMensaje, reg.monedaDestino, reg.montoAutorizado, reg.respuestaIso?.descripcion, reg.tipoTransaccion?.codigo,
-        reg.numeroAutorizacion, reg.modoEntradaCaptura, reg.codigoComercio, reg.nombreComercio, reg.nombreCadena,
-        reg.giro, reg.descripcionGiro, reg.codigoProcesoOnline, reg.ciudad, reg.pais,
-        reg.indicadorPresenciaCvv2, reg.tipoFranquicia, reg.montoOrigen, reg.productoMarca, reg.tidTerminal,
-        reg.tipoDiferido, reg.numeroCuotasPactadas, reg.binAdquirente, reg.binEmisor, reg.descripcionBinEmisor,
-        reg.respuestaInterna, reg.recurrente, reg.eci, reg.termEntryCapab, reg.voucher,
-        reg.chipCondicionCode, reg.tipoEmisor, reg.tipoFactura, reg.procesado, reg.tipoProducto,
-        reg.numeroTransaccion, reg.atcActual, reg.atcAutorizacion, reg.campo34, reg.campo55, reg.campo56
-      ]);
-    });
-  }
+  // Todos los registros sin paginar
+  registros.forEach((reg: any) => {
+    hoja.addRow([
+      String(reg.fechaProceso ?? ''),
+      String(reg.fechaHoraTransaccion ?? ''),
+      String(reg.cuenta ?? ''),
+      String(reg.numeroTarjeta ?? ''),
+      String(reg.fechaExpiracion ?? ''),
+      String(reg.tipoMensaje ?? ''),
+      String(reg.monedaDestino ?? ''),
+      String(reg.montoAutorizado ?? ''),
+      String(reg.respuestaIso?.descripcion ?? ''),
+      String(reg.tipoTransaccion?.codigo ?? ''),
+      String(reg.numeroAutorizacion ?? ''),
+      String(reg.modoEntradaCaptura ?? ''),
+      String(reg.codigoComercio ?? ''),
+      String(reg.nombreComercio ?? ''),
+      String(reg.nombreCadena ?? ''),
+      String(reg.giro ?? ''),
+      String(reg.descripcionGiro ?? ''),
+      String(reg.codigoProcesoOnline ?? ''),
+      String(reg.ciudad ?? ''),
+      String(reg.pais ?? ''),
+      String(reg.indicadorPresenciaCvv2 ?? ''),
+      String(reg.tipoFranquicia ?? ''),
+      String(reg.montoOrigen ?? ''),
+      String(reg.productoMarca ?? ''),
+      String(reg.tidTerminal ?? ''),
+      String(reg.tipoDiferido ?? ''),
+      String(reg.numeroCuotasPactadas ?? ''),
+      String(reg.binAdquirente ?? ''),
+      String(reg.binEmisor ?? ''),
+      String(reg.descripcionBinEmisor ?? ''),
+      String(reg.respuestaInterna ?? ''),
+      String(reg.recurrente ?? ''),
+      String(reg.eci ?? ''),
+      String(reg.termEntryCapab ?? ''),
+      String(reg.voucher ?? ''),
+      String(reg.chipCondicionCode ?? ''),
+      String(reg.tipoEmisor ?? ''),
+      String(reg.tipoFactura ?? ''),
+      String(reg.procesado ?? ''),
+      String(reg.tipoProducto ?? ''),
+      String(reg.numeroTransaccion ?? ''),
+      String(reg.atcActual ?? ''),
+      String(reg.atcAutorizacion ?? ''),
+      String(reg.campo34 ?? ''),
+      String(reg.campo55 ?? ''),
+      String(reg.campo56 ?? '')
+    ]);
+  });
 
   await workbook.xlsx.writeFile(outputPath);
-  console.log('✅ Excel generado en:', outputPath);
+  console.log('Excel generado en:', outputPath);
   return outputPath;
 }

@@ -2,8 +2,10 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import mysql from 'mysql2/promise';
 import { RequestBody, Filtros } from '../hello-world/interfaces/index';
-
 import { generarExcelAutorizaciones } from './utils/generarExcelAutorizaciones';
+import { S3Client, PutObjectCommand} from "@aws-sdk/client-s3";
+import fs from "fs";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 
 
@@ -13,20 +15,14 @@ export const consultarAutorizacionesHandler = async (
   try {
     const body: RequestBody = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
     const filtros: Partial<Filtros> = body?.filtros || {};
-
     const usuario = body.rolUsuario ?? '';
-
     const numeroPagina = Number(body?.paginacion?.numeroPagina ?? 1);
     const tamanioPagina = Number(body?.paginacion?.tamanioPagina ?? 20);
-    const offset = (numeroPagina - 1) * tamanioPagina;
-
-
-
     const nombreArchivo = `autorizaciones_${Date.now()}.xlsx`;
 
 
     //if (!filtros.fechaDesde || !filtros.fechaHasta || !filtros.numeroTarjeta)
-    if (!filtros.fechaDesde || !filtros.fechaHasta) {
+    if (!filtros.fechaDesde || !filtros.fechaHasta ) {
       return response(400, {
         estado: 'ERROR',
         codigoRespuesta: '400',
@@ -42,102 +38,44 @@ export const consultarAutorizacionesHandler = async (
       database: process.env.DB_NAME,
     });
 
-    const [rows] = await connection.query(
-      'CALL pa_consultar_autorizaciones(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? ,?)',
-      [
-        filtros.fechaDesde,
-        filtros.fechaHasta,
-        filtros.tipoAutorizacion,
-        filtros.numeroAutorizacion,
-        filtros.tipoFranquicia,
-        filtros.nombreCadena,
-        filtros.nombreComercio,
-        filtros.numeroTarjeta,
-        filtros.cuenta,
-        filtros.codigoGiro,
-        filtros.codigoMarca,
-        filtros.tipoEmisor,
-        filtros.tipoProducto,
-        filtros.tipoDiferido,
-        filtros.numeroCuotas,
-        filtros.tipoMensaje,
-        filtros.estadoAutorizacion,
-        offset,
-        tamanioPagina
-      ]
-    );
-
-    const registros = rows[0];//contiene el conjunto de registros paginados (por ejemplo, 20 registros).
-    const totalRegistros = rows[1]?.[0]?.total_registros ?? 0;//contiene el total de registros sin paginar, útil para saber cuántas páginas hay (esto normalmente se calcula con un COUNT(*) OVER() dentro del SP).
-
     const puedeVer = await puedeVerTarjetaSinEnmascarar(usuario, connection);
+    const todasLasAutorizaciones: any[] = [];
 
-    console.log(`Usuario: ${usuario}, ¿Puede ver tarjeta sin enmascarar?:`, puedeVer);
+    let paginaActual = numeroPagina;
+    let totalRegistros = 0
 
+    while (true) {
+      const offset = (paginaActual  - 1) * tamanioPagina;
 
-    const autorizaciones = await Promise.all(
-      registros.map(async row => {
-        const panEnmascarado = await aplicarEnmascaramientoDesdeBD(row.vi_c2_tarjeta2, puedeVer, connection);
-        return {
-          fechaProceso: row.vi_fecha_proceso,
-          fechaHoraTransaccion: row.vi_fechahora,
-          cuenta: row.vi_cuenta,
-          numeroTarjeta: panEnmascarado,
-          fechaExpiracion: row.vi_c14_exp_date,
-          tipoMensaje: row.vi_msgType,
-          monedaDestino: row.vi_c51_currency_code_cardbill,
-          montoAutorizado: row.vi_c5_monto_settlement,
-          respuestaIso: {
-            codigo: row.vi_c39_resp_code,
-            descripcion: row.vi_c39_resp_desc
-          },
-          tipoTransaccion: {
-            codigo: row.vi_c3_proccode,
-            descripcion: ""
-          },
-          numeroAutorizacion: row.vi_c38_autorizacion,
-          modoEntradaCaptura: row.vi_pos_entry_mode,
-          codigoComercio: row.vi_c42_card_acceptor_id,
-          nombreComercio: row.vi_nombre_comercio,
-          nombreCadena: row.vi_descadena,
-          giro: row.vi_c18_merchant_type,
-          descripcionGiro: row.vi_des_merchant_type,
-          codigoProcesoOnline: "",
-          ciudad: row.vi_c43_card_acceptor_name_loc,
-          pais: "",
-          indicadorPresenciaCvv2: row.vi_ind_cvv,
-          tipoFranquicia: row.vi_tipoFranquicia,
-          montoOrigen: row.vi_c4_monto,
-          productoMarca: "",
-          tidTerminal: row.vi_c41_terminal_id,
-          tipoDiferido: row.vi_codtipodiferido,
-          numeroCuotasPactadas: row.vi_cuotaspactadas,
-          binAdquirente: row.vi_c32_acq_inst_id,
-          binEmisor: "",
-          descripcionBinEmisor: "",
-          respuestaInterna: "",
-          recurrente: "",
-          eci: "",
-          termEntryCapab: "",
-          voucher: "",
-          chipCondicionCode: "",
-          tipoEmisor: "",
-          tipoFactura: "",
-          procesado: "",
-          tipoProducto: "",
-          numeroTransaccion: "",
-          atcActual: "",
-          atcAutorizacion: "",
-          campo34: "",
-          campo55: "",
-          campo56: ""
-        };
-      })
-    );
+      const [rows] = await connection.query(
+        'CALL pa_consultar_autorizaciones(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          filtros.fechaDesde,
+          filtros.fechaHasta,
+          filtros.tipoAutorizacion,
+          filtros.numeroAutorizacion,
+          filtros.tipoFranquicia,
+          filtros.nombreCadena,
+          filtros.nombreComercio,
+          filtros.numeroTarjeta,
+          filtros.cuenta,
+          filtros.codigoGiro,
+          filtros.codigoMarca,
+          filtros.tipoEmisor,
+          filtros.tipoProducto,
+          filtros.tipoDiferido,
+          filtros.numeroCuotas,
+          filtros.tipoMensaje,
+          filtros.estadoAutorizacion,
+          offset,
+          tamanioPagina
+        ]
+      );
 
-     await connection.end();
-
-    if (!registros || registros.length === 0) {
+      const registrosPagina = rows[0];
+      totalRegistros = rows[1]?.[0]?.total_registros ?? 0;
+      
+      if (!registrosPagina || registrosPagina.length === 0) {
       return response(404, {
         estado: 'ERROR',
         codigoRespuesta: '404',
@@ -146,8 +84,90 @@ export const consultarAutorizacionesHandler = async (
       });
     }
 
-    const rutaExcel = await generarExcelAutorizaciones(registros, tamanioPagina, nombreArchivo);
-    console.log('✅ Excel generado en:', rutaExcel);
+      const autorizacionesPagina = await Promise.all(
+        registrosPagina.map(async row => {
+          const panEnmascarado = await aplicarEnmascaramientoDesdeBD(row.vi_c2_tarjeta2, puedeVer, connection);
+          return {
+            fechaProceso: row.vi_fecha_proceso,
+            fechaHoraTransaccion: row.vi_fechahora,
+            cuenta: row.mp_cuenta,
+            numeroTarjeta: panEnmascarado,
+            fechaExpiracion: row.vi_c14_exp_date,
+            tipoMensaje: row.vi_msgType,
+            monedaDestino: row.vi_c51_currency_code_cardbill,
+            montoAutorizado: row.vi_c5_monto_settlement,
+            respuestaIso: {
+              codigo: row.vi_c39_resp_code,
+              descripcion: row.vi_c39_resp_desc
+            },
+            tipoTransaccion: {
+              codigo: row.vi_c3_proccode,
+              descripcion: ""
+            },
+            numeroAutorizacion: row.vi_c38_autorizacion,
+            modoEntradaCaptura: row.vi_pos_entry_mode,
+            codigoComercio: row.vi_c42_card_acceptor_id,
+            nombreComercio: row.vi_nombre_comercio,
+            nombreCadena: row.vi_descadena,
+            giro: row.vi_c18_merchant_type,
+            descripcionGiro: row.vi_des_merchant_type,
+            codigoProcesoOnline: "",
+            ciudad: row.vi_c43_card_acceptor_name_loc,
+            pais: "",
+            indicadorPresenciaCvv2: row.vi_ind_cvv,
+            tipoFranquicia: row.vi_tipoFranquicia,
+            montoOrigen: row.vi_c4_monto,
+            productoMarca: "",
+            tidTerminal: row.vi_c41_terminal_id,
+            tipoDiferido: row.vi_codtipodiferido,
+            numeroCuotasPactadas: row.vi_cuotaspactadas,
+            binAdquirente: row.vi_c32_acq_inst_id,
+            binEmisor: "",
+            descripcionBinEmisor: "",
+            respuestaInterna: "",
+            recurrente: "",
+            eci: "",
+            termEntryCapab: "",
+            voucher: "",
+            chipCondicionCode: "",
+            tipoEmisor: "",
+            tipoFactura: "",
+            procesado: "",
+            tipoProducto: "",
+            numeroTransaccion: "",
+            atcActual: "",
+            atcAutorizacion: "",
+            campo34: "",
+            campo55: "",
+            campo56: ""
+          };
+        })
+      );
+
+      todasLasAutorizaciones.push(...autorizacionesPagina);
+      if (todasLasAutorizaciones.length >= totalRegistros) break;
+      paginaActual++;
+    }
+
+    await connection.end();
+
+    console.log(`Usuario: ${usuario}, ¿Puede ver tarjeta sin enmascarar?:`, puedeVer);
+    const rutaExcel = await generarExcelAutorizaciones(todasLasAutorizaciones, nombreArchivo);
+    const s3Url = await uploadFileToS3(rutaExcel, 'bb-emisormdp-datasource', nombreArchivo);
+    console.log('Excel generado en:', s3Url);
+    
+    
+    const totalPaginas = Math.ceil(totalRegistros / tamanioPagina);
+    const dataPaginada = Array.from({ length: totalPaginas }, (_, i) => {
+      const inicio = i * tamanioPagina;
+      const fin = inicio + tamanioPagina;
+      return {
+        paginaActual: i + 1,
+        tamanioPagina,
+        autorizaciones: todasLasAutorizaciones.slice(inicio, fin)
+      };
+    });
+
 
     return {
       statusCode: 200,
@@ -155,13 +175,9 @@ export const consultarAutorizacionesHandler = async (
         estado: "EXITO",
         codigoRespuesta: "000",
         mensaje: "Consulta general de autorizaciones realizada exitosamente.",
-        data: {
-          totalRegistros,
-          totalPagina: Math.ceil(totalRegistros / tamanioPagina),
-          paginaActual: numeroPagina,
-          tamanioPagina,
-          autorizaciones
-        }
+        totalRegistros,
+        totalPagina: Math.ceil(totalRegistros / tamanioPagina),
+        data: dataPaginada
       })
     };
   } catch (error: any) {
@@ -212,6 +228,37 @@ async function aplicarEnmascaramientoDesdeBD(
 );
   return rows[0]?.pan ?? pan;
 }
+
+
+export async function uploadFileToS3(filePath: string, bucket: string, key: string): Promise<string> {
+  const s3 = new S3Client({ region: 'us-east-1' });
+  try {
+    const fileStream = fs.createReadStream(filePath);
+
+    const uploadParams = {
+      Bucket: bucket,
+      Key: key,
+      Body: fileStream,
+    };
+
+    await s3.send(new PutObjectCommand(uploadParams));
+
+
+    const command = new PutObjectCommand({ Bucket: bucket, Key: key });
+    const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
+
+    return url;
+  } catch (error) {
+    console.error('Error al subir archivo a S3:', error);
+    throw new Error('No se pudo subir el archivo a S3');
+  }
+}
+
+
+
+
+
+
 
 
 
