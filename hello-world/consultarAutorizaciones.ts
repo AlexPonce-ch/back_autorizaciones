@@ -36,9 +36,10 @@ export const consultarAutorizacionesHandler = async (
       user: process.env.DB_USER,
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
+      multipleStatements: true,
     });
 
-    const puedeVer = await puedeVerTarjetaSinEnmascarar(usuario, connection);
+    //const puedeVer = await puedeVerTarjetaSinEnmascarar(usuario, connection);
     const todasLasAutorizaciones: any[] = [];
 
     let paginaActual = numeroPagina;
@@ -86,7 +87,8 @@ export const consultarAutorizacionesHandler = async (
 
       const autorizacionesPagina = await Promise.all(
         registrosPagina.map(async row => {
-          const panEnmascarado = await aplicarEnmascaramientoDesdeBD(row.vi_c2_tarjeta2, puedeVer, connection);
+          // const panEnmascarado = await aplicarEnmascaramientoDesdeBD(row.vi_c2_tarjeta2, puedeVer, connection);
+          const panEnmascarado = await aplicarEnmascaramientoDesdeSP(row.vi_c2_tarjeta2, usuario, connection);
           return {
             fechaProceso: row.vi_fecha_proceso,
             fechaHoraTransaccion: row.vi_fechahora,
@@ -151,7 +153,7 @@ export const consultarAutorizacionesHandler = async (
 
     await connection.end();
 
-    console.log(`Usuario: ${usuario}, ¿Puede ver tarjeta sin enmascarar?:`, puedeVer);
+    //console.log(`Usuario: ${usuario}, ¿Puede ver tarjeta sin enmascarar?:`, puedeVer);
     const rutaExcel = await generarExcelAutorizaciones(todasLasAutorizaciones, nombreArchivo);
     const s3Url = await uploadFileToS3(rutaExcel, 'bb-emisormdp-datasource', nombreArchivo);
     console.log('Excel generado en:', s3Url);
@@ -201,6 +203,39 @@ function response(statusCode: number, body: any): APIGatewayProxyResult {
   };
 }
 
+async function aplicarEnmascaramientoDesdeSP(
+  pan: string,
+  usuario: string,
+  connection: mysql.Connection
+): Promise<string> {
+  try {
+    const sql = "CALL sp_enmascarar_pan(?, ?, @out_pan); SELECT @out_pan AS pan;";
+    const [results] = await connection.query(sql, [usuario, pan]);
+
+    const panEnmascarado = (results as any[])[1]?.[0]?.pan;
+    return panEnmascarado ?? pan;
+  } catch (error) {
+    console.error("Error en aplicarEnmascaramientoDesdeSP:", error);
+    return pan;
+  }
+}
+
+/*
+async function aplicarEnmascaramientoDesdeSP(
+  usuario: string,
+  pan: string,
+  connection: mysql.Connection
+): Promise<string> {
+  const [resultSets] = await connection.query(
+    "CALL sp_enmascarar_pan(?, ?, @out_pan); SELECT @out_pan AS pan;",
+    [pan, usuario]
+  );
+  const result = Array.isArray(resultSets[1]) ? resultSets[1][0] : null;
+  return result?.pan ?? pan;
+}
+*/
+
+/*
 async function puedeVerTarjetaSinEnmascarar(usuario: string, connection: mysql.Connection): Promise<boolean> {
   const [rows] = await connection.query(
     `SELECT COUNT(1) AS permitido
@@ -215,8 +250,6 @@ async function puedeVerTarjetaSinEnmascarar(usuario: string, connection: mysql.C
   );
   return rows[0]?.permitido === 1;
 }
-
-
 async function aplicarEnmascaramientoDesdeBD(
   pan: string,
   mostrarCompleto: boolean,
@@ -228,7 +261,7 @@ async function aplicarEnmascaramientoDesdeBD(
 );
   return rows[0]?.pan ?? pan;
 }
-
+*/
 
 export async function uploadFileToS3(filePath: string, bucket: string, key: string): Promise<string> {
   const s3 = new S3Client({ region: 'us-east-1' });
