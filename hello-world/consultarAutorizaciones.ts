@@ -22,7 +22,7 @@ export const consultarAutorizacionesHandler = async (
 
 
     //if (!filtros.fechaDesde || !filtros.fechaHasta || !filtros.numeroTarjeta)
-    if (!filtros.fechaDesde || !filtros.fechaHasta ) {
+    if (!filtros.fechaDesde || !filtros.fechaHasta || !filtros.numeroTarjeta) {
       return response(400, {
         estado: 'ERROR',
         codigoRespuesta: '400',
